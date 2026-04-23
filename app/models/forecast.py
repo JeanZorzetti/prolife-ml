@@ -50,7 +50,7 @@ def run_forecast(
         epochs=200,
         batch_size=32,
         learning_rate=0.001,
-        trainer_config={"progress_bar_refresh_rate": 0},
+        trainer_config={"enable_progress_bar": False},
     )
 
     for name in regressor_names:

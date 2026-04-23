@@ -48,9 +48,10 @@ def run_xgb_predict(
         raise ValueError(f"Target column '{target}' not in features")
 
     df = engineer_features(df, target)
-
+    # y must be aligned with X after dropna inside engineer_features
     y = df[target]
     X = df.drop(columns=[target])
+    assert len(X) == len(y), f"Feature/target length mismatch: {len(X)} vs {len(y)}"
 
     if len(X) < 30:
         raise ValueError("Need at least 30 rows after feature engineering")
