@@ -2,13 +2,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps for prophet/neuralprophet (pystan, cmdstanpy)
+# System deps for prophet/neuralprophet (pystan, cmdstanpy, compilation)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+
+# Install PyTorch CPU-only first (avoids pulling CUDA ~4GB variant)
+RUN pip install --no-cache-dir \
+    torch==2.4.1+cpu \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-compile Stan models on build to avoid cold-start delay
