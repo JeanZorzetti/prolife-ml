@@ -24,6 +24,7 @@ class ForecastRequest(BaseModel):
 
 
 @router.post("")
+@router.post("/")
 def forecast(req: ForecastRequest, _: dict = Depends(verify_token)):
     try:
         result = run_forecast(

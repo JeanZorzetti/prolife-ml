@@ -1,16 +1,17 @@
 import os
-from fastapi import HTTPException, Header
+from fastapi import HTTPException, Request
 from jose import jwt, JWTError
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
 ALGORITHM = "HS256"
 
 
-def verify_token(authorization: str = Header(...)) -> dict:
+def verify_token(request: Request) -> dict:
     """Shared JWT auth with the Next.js prolife-site service."""
-    if not authorization.startswith("Bearer "):
+    auth = request.headers.get("authorization") or request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
-    token = authorization.removeprefix("Bearer ")
+    token = auth[7:]
     if not JWT_SECRET:
         raise HTTPException(status_code=500, detail="JWT_SECRET not configured")
     try:

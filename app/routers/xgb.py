@@ -13,6 +13,7 @@ class XgbRequest(BaseModel):
 
 
 @router.post("")
+@router.post("/")
 def xgb_predict(req: XgbRequest, _: dict = Depends(verify_token)):
     try:
         return run_xgb_predict(

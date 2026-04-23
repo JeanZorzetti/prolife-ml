@@ -17,6 +17,7 @@ class AnomalyRequest(BaseModel):
 
 
 @router.post("")
+@router.post("/")
 def anomaly(req: AnomalyRequest, _: dict = Depends(verify_token)):
     try:
         return detect_anomalies(

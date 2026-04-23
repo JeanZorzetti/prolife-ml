@@ -19,6 +19,7 @@ class CausalImpactRequest(BaseModel):
 
 
 @router.post("")
+@router.post("/")
 def causal_impact(req: CausalImpactRequest, _: dict = Depends(verify_token)):
     try:
         return run_causal_impact(
