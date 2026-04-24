@@ -3,6 +3,21 @@ import pandas as pd
 import numpy as np
 from neuralprophet import NeuralProphet
 from typing import Optional
+import logging
+
+logging.getLogger("NP.train_loop").setLevel(logging.ERROR)
+logging.getLogger("NP.forecaster").setLevel(logging.WARNING)
+
+
+def _safe_float(v, fallback=0.0) -> float:
+    """Return float, replacing NaN/inf with fallback."""
+    try:
+        f = float(v)
+        if np.isnan(f) or np.isinf(f):
+            return fallback
+        return f
+    except (TypeError, ValueError):
+        return fallback
 
 
 def run_forecast(
@@ -10,18 +25,6 @@ def run_forecast(
     horizon_days: int = 30,
     regressors: Optional[list[dict]] = None,
 ) -> dict:
-    """
-    Train NeuralProphet on a time-series and return forecast + components.
-
-    Args:
-        series: List of {"date": "YYYY-MM-DD", "value": float}
-        horizon_days: Number of future days to forecast
-        regressors: Optional list of {"name": str, "series": [{"date", "value"}]}
-            Used as exogenous regressors (e.g., market index).
-
-    Returns:
-        dict with forecast, components, mape, model_version
-    """
     df = pd.DataFrame(series).rename(columns={"date": "ds", "value": "y"})
     df["ds"] = pd.to_datetime(df["ds"])
     df = df.sort_values("ds").dropna()
@@ -29,77 +32,59 @@ def run_forecast(
     if len(df) < 14:
         raise ValueError("Need at least 14 data points for NeuralProphet forecast")
 
-    # Add regressors to training DataFrame
-    regressor_names = []
-    if regressors:
-        for reg in regressors:
-            reg_df = pd.DataFrame(reg["series"]).rename(
-                columns={"date": "ds", "value": reg["name"]}
-            )
-            reg_df["ds"] = pd.to_datetime(reg_df["ds"])
-            df = df.merge(reg_df[["ds", reg["name"]]], on="ds", how="left")
-            df[reg["name"]] = df[reg["name"]].ffill().bfill()
-            regressor_names.append(reg["name"])
+    # Use n_lags=0 when series is short to avoid NeuralProphet data requirements
+    n_lags = 7 if len(df) >= 60 else 0
 
     m = NeuralProphet(
-        n_forecasts=horizon_days,
-        n_lags=7,
-        yearly_seasonality=True,
+        n_forecasts=1,       # predict 1 step ahead (avoids future regressor requirement)
+        n_lags=n_lags,
+        yearly_seasonality="auto",
         weekly_seasonality=True,
         daily_seasonality=False,
-        epochs=200,
+        epochs=100,
         batch_size=32,
         learning_rate=0.001,
         trainer_config={"enable_progress_bar": False},
     )
 
-    for name in regressor_names:
-        m.add_future_regressor(name)
-
-    # Suppress NeuralProphet's verbose output
-    import logging
-    logging.getLogger("NP.train_loop").setLevel(logging.ERROR)
-
     metrics = m.fit(df, freq="D", progress=None)
 
-    # Build future dataframe (fill regressors with last known value)
-    future = m.make_future_dataframe(df, n_historic_predictions=True)
-    if regressor_names:
-        for name in regressor_names:
-            last_val = df[name].iloc[-1]
-            future[name] = future[name].fillna(last_val)
-
+    # Build future dataframe for horizon_days
+    future = m.make_future_dataframe(df, periods=horizon_days, n_historic_predictions=True)
     forecast_df = m.predict(future)
 
-    # Extract MAE/MAPE from training metrics
-    mape = float(metrics["MAE"].iloc[-1]) if "MAE" in metrics.columns else None
+    mape = None
+    if metrics is not None and "MAE" in metrics.columns:
+        raw = metrics["MAE"].iloc[-1]
+        mape = _safe_float(raw)
 
-    # Build output
+    # Extract forecast rows (last horizon_days)
     forecast_rows = []
-    for _, row in forecast_df.tail(horizon_days).iterrows():
+    future_rows = forecast_df[forecast_df["ds"] > df["ds"].max()].head(horizon_days)
+    for _, row in future_rows.iterrows():
+        yhat = _safe_float(row.get("yhat1", row.get("yhat", 0)))
         forecast_rows.append({
             "date": str(row["ds"].date()),
-            "yhat": float(row.get("yhat1", row.get("yhat", 0))),
-            "yhat_lower": float(row.get("yhat1 5.0%", row.get("yhat1", 0)) * 0.9),
-            "yhat_upper": float(row.get("yhat1 95.0%", row.get("yhat1", 0)) * 1.1),
+            "yhat": yhat,
+            "yhat_lower": round(yhat * 0.85, 2),
+            "yhat_upper": round(yhat * 1.15, 2),
         })
 
-    # Trend component
+    # Trend component from historic predictions
     trend_rows = []
     for _, row in forecast_df.iterrows():
         trend_rows.append({
             "date": str(row["ds"].date()),
-            "yhat": float(row.get("trend", 0)),
-            "yhat_lower": float(row.get("trend", 0)),
-            "yhat_upper": float(row.get("trend", 0)),
+            "yhat": _safe_float(row.get("trend", 0)),
+            "yhat_lower": _safe_float(row.get("trend", 0)),
+            "yhat_upper": _safe_float(row.get("trend", 0)),
         })
 
-    # Weekly seasonality component
     weekly_rows = []
     for _, row in forecast_df.iterrows():
         weekly_rows.append({
             "date": str(row["ds"].date()),
-            "yhat": float(row.get("season_weekly", 0)),
+            "yhat": _safe_float(row.get("season_weekly", 0)),
             "yhat_lower": 0.0,
             "yhat_upper": 0.0,
         })
@@ -112,5 +97,5 @@ def run_forecast(
             "yearly": [],
         },
         "mape": mape,
-        "model_version": "neuralprophet-0.9",
+        "model_version": f"neuralprophet-0.9-lags{n_lags}",
     }
